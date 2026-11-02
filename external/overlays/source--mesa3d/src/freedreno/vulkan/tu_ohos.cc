@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 /* SPDX-License-Identifier: MIT
  * Real linear DMA-BUF import and explicit sync for the Ace5 OHOS port.
  * Only the formats/layouts exported by our allocator are supported.
@@ -63,10 +64,18 @@ VkResult tu_ohos_bind_layout(tu_device *device,tu_image *image,const Ace5OHBuffe
   planes[1].rowPitch=planes[2].rowPitch=h->stride/2;
   planes[1].size=planes[2].size=chromaSize;
  }
+ // fdl6_layout() accumulates into image->layout[]/total_size. This image may
+ // already have a layout (BindImageMemory2 computes it once after import), so
+ // reset before recomputing; otherwise total_size doubles and every native
+ // buffer bind is rejected with VK_ERROR_INVALID_EXTERNAL_HANDLE.
+ memset(image->layout, 0, sizeof(image->layout));
+ image->total_size = 0;
  VkResult result=TU_CALLX(device,tu_image_update_layout)(device,image,DRM_FORMAT_MOD_LINEAR,planes);
  fprintf(stderr,"SHENG_BIND layout_result=%d total_size=%llu native_size=%d\n",result,(unsigned long long)image->total_size,h->size);
  if(result!=VK_SUCCESS)return result;
- return image->total_size<=unsigned(h->size)?VK_SUCCESS:VK_ERROR_INVALID_EXTERNAL_HANDLE;
+ VkResult bind = image->total_size<=unsigned(h->size)?VK_SUCCESS:VK_ERROR_INVALID_EXTERNAL_HANDLE;
+ fprintf(stderr,"SHENG_BIND bind_result=%d total_size=%llu native_size=%d\n",bind,(unsigned long long)image->total_size,h->size);
+ return bind;
 }
 VkResult tu_ohos_import_image(tu_device *device,tu_image *image,const VkNativeBufferOHOS *native,const VkAllocationCallbacks *alloc) {
  auto *h=reinterpret_cast<const Ace5OHBufferHandle*>(native->handle);

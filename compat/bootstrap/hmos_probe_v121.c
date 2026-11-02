@@ -135,19 +135,35 @@ static void discover(void) {
 }
 static void persistent(void) {
     if(logfd>=0)return;
-    char b[128];if(readfile("/dev/block/by-name/metadata",b,sizeof(b))<0)return;
-    const char *fs[]={"f2fs","mifs","ext4"};int ok=0;
-    for(unsigned i=0;i<sizeof(fs)/sizeof(fs[0]);i++) {
-        if(mount("/dev/block/by-name/metadata","/metadata",fs[i],MS_NOSUID|MS_NODEV|MS_NOATIME,"")==0) {note("metadata mounted as %s (no format/fsck)",fs[i]);ok=1;break;}
-        if(errno==EBUSY) {ok=1;break;}
+    /* fuxi has no cache partition; cust is the large writable fallback.
+     * metadata is only 2 MiB and remains the second choice. */
+    struct { const char *part; const char *mnt; } candidates[] = {
+        {"cust", "/cust"}, {"metadata", "/metadata"}
+    };
+    const char *fs[]={"ext4","f2fs","mifs"};
+    char id[128]="unknown";
+    readfile("/proc/sys/kernel/random/boot_id",id,sizeof(id));
+    id[strcspn(id,"\r\n")]=0;
+    for (unsigned c = 0; c < sizeof(candidates)/sizeof(candidates[0]); c++) {
+        char dev[128], target[128];
+        snprintf(dev,sizeof(dev),"/dev/block/by-name/%s",candidates[c].part);
+        snprintf(target,sizeof(target),"%s",candidates[c].mnt);
+        if(access(dev,F_OK)<0)continue;
+        makedir(target);
+        int ok=0;
+        for(unsigned i=0;i<sizeof(fs)/sizeof(fs[0]);i++) {
+            if(mount(dev,target,fs[i],MS_NOSUID|MS_NODEV|MS_NOATIME,"")==0) {note("%s mounted as %s (no format/fsck)",candidates[c].part,fs[i]);ok=1;break;}
+            if(errno==EBUSY) {ok=1;break;}
+        }
+        if(!ok)continue;
+        char dbg[160];snprintf(dbg,sizeof(dbg),"%s/hmos-debug",target);
+        if(mkdir(dbg,0700)<0&&errno!=EEXIST)continue;
+        snprintf(logpath,sizeof(logpath),"%s/probe-%s.log",dbg,id);
+        logfd=open(logpath,O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_DSYNC|O_NOFOLLOW,0600);
+        if(logfd<0)continue;
+        allwrite(logfd,history,used);disk_bytes=used;note("PERSISTENT_LOG=%s",logpath);fsync(logfd);
+        return;
     }
-    if(!ok)return;
-    if(mkdir("/metadata/hmos-debug",0700)<0&&errno!=EEXIST)return;
-    char id[128]="unknown";readfile("/proc/sys/kernel/random/boot_id",id,sizeof(id));id[strcspn(id,"\r\n")]=0;
-    snprintf(logpath,sizeof(logpath),"/metadata/hmos-debug/probe-%s.log",id);
-    logfd=open(logpath,O_CREAT|O_EXCL|O_WRONLY|O_CLOEXEC|O_DSYNC|O_NOFOLLOW,0600);
-    if(logfd<0)return;
-    allwrite(logfd,history,used);disk_bytes=used;note("PERSISTENT_LOG=%s",logpath);fsync(logfd);
 }
 static int userdata_is_mounted(const char *device,const char *target) {
     /* Accept any normally formatted ext4 userdata, including a fresh UUID.
@@ -238,7 +254,7 @@ static void loadmodules(void) {
      * later. These are present in this device's vendor recovery ramdisk. */
     const char *usbmods[]={"pinctrl-spmi-gpio.ko","pinctrl-spmi-mpp.ko","bam_dma.ko","msm_gpi.ko","i2c-msm-geni.ko","pmic_glink.ko","ucsi_glink.ko","usb_bam.ko","phy-generic.ko","phy-msm-ssusb-qmp.ko","phy-msm-snps-eusb2.ko","phy-msm-m31-eusb2.ko","repeater.ko","repeater-qti-pmic-eusb2.ko","repeater-i2c-eusb2.ko","redriver.ko","eud.ko","ps5169.ko","dwc3-msm.ko"};
     for(unsigned j=0;j<sizeof(usbmods)/sizeof(usbmods[0]);j++){loadmod(usbmods[j],0);discover();persistent();}
-    if(access("/hmos-hdf-graphics.hcb",F_OK)==0)loadmod("msm_drm.ko",0);
+    if(access("/lib/modules/msm_drm.ko",F_OK)==0)loadmod("msm_drm.ko",0);
 }
 
 /* SHA-256 for validating liblp geometry/header/table checksums before mapping. */

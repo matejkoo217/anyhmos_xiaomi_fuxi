@@ -54,8 +54,10 @@ def commands(out):
     ]:
         flags = ['-static','-O2','-Wall','-Wextra','-Werror']
         if key=='init-entry':
+            # Match the original 4 KiB page layout; binutils may default to
+            # 64 KiB segments for aarch64 and inflate the freestanding entry.
             flags=['-nostdlib','-static','-Os','-fno-stack-protector','-fno-builtin',
-                   '-Wl,-e,_start,-z,noexecstack,--build-id=none']
+                   '-Wl,-e,_start,-z,noexecstack,--build-id=none,-z,max-page-size=4096']
         result[key]=['aarch64-linux-gnu-gcc',*flags,str(ROOT/source),'-o',str(out/output)]
     display_inc = [ROOT/'compat/display',ROOT/'compat/display/include/vdi-only',
         ROOT/'compat/display/include',ROOT/'compat/display/include/display/buffer',
@@ -90,6 +92,10 @@ def commands(out):
          '-Wl,-soname,libdisplay_buffer_vdi_impl.z.so'],cpp_runtime,display_inc,True)
     add('allocator-contract','alpha_metadata_probe',['tests/display/alpha_metadata_probe.cpp'],
         [],cpp_runtime,display_inc,True)
+    # No private screenlock headers: resolves the donor C++ symbols with dlsym.
+    add('screenlock-disable','native_screenlock_request',
+        ['compat/services/native_screenlock_disable.cpp'],
+        ['-Os','-std=c++17'],cpp_runtime+['-ldl'],[],True)
     add('display-wake','native_display_wake',['compat/display/native_display_wake.cpp'],
         ['-Os','-std=c++17'],cpp_runtime,[],True)
     add('display-mode','native_refresh_rate',['compat/display/native_refresh_rate.cpp'],

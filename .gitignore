@@ -1,6 +1,7 @@
 # Generated runtime inputs, proprietary extracts, and personal data
 /work/
 /release/
+/compat/useriam/out/
 /output/releases/
 /output/logs/
 /output/screenshots/
@@ -33,3 +34,5 @@ node_modules/
 .env.*
 *.pem
 *.key
+*.jpeg
+tests/display/pull-screenshot.sh

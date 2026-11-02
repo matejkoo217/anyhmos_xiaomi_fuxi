@@ -9,8 +9,28 @@
     },
     {
       "path": ".gitignore",
-      "bytes": 408,
-      "sha256": "6760b1aa3b2227f5f443cdc411a782db5a6dcb69a1e28938eabd0236df68509b"
+      "bytes": 429,
+      "sha256": "a5a97205ae4fb730d1d282f650bebafdcddbfb3421a28fc77f9a86147dcde4fb"
+    },
+    {
+      "path": "README.en.md",
+      "bytes": 9319,
+      "sha256": "198b1136e75c50ec56ad2b76d8bca347080f00630fd72bb413f9c3cae7cb02be"
+    },
+    {
+      "path": "README.md",
+      "bytes": 7931,
+      "sha256": "e054d7c431bf00b4d4a4d7f8b1bb2e315b332040d194391f40eb0778c11af6a1"
+    },
+    {
+      "path": "RELEASE.json",
+      "bytes": 449,
+      "sha256": "21465db3e7aed0073e2ca0e50ce09623a66c6c594ff62983fdfd76f7e4ee28f5"
+    },
+    {
+      "path": "SOURCE-SELECTION.json",
+      "bytes": 99185,
+      "sha256": "faaf0b43fcc57ae132aaae5ca01eb0bb4afc5290c1de425a34c005febdebbdb6"
     },
     {
       "path": "analysis/alpha-metadata-v130-verification.json",
@@ -394,8 +414,8 @@
     },
     {
       "path": "compat/bootstrap/init_entry.c",
-      "bytes": 2287,
-      "sha256": "c91a57cafbaca13348cc6fc284667a7591803ffeaa9635fe870995af2c536505"
+      "bytes": 2424,
+      "sha256": "7ad78721a76ddbc02cf532107f1bf59e552a0f517358efa4e7be7bc376ea6d6b"
     },
     {
       "path": "compat/bootstrap/probe_command_v116.inc",
@@ -558,6 +578,11 @@
       "sha256": "bcd2e9560453dfdcdb8051e9e81333f6d52b67ba9fd2f45155c8088b5502d5f7"
     },
     {
+      "path": "compat/ipc/Makefile",
+      "bytes": 203,
+      "sha256": "12cb7846d2394b14ab13043ca2639deaeb3c1c118b4e3103547f284cd1409bf1"
+    },
+    {
       "path": "compat/ipc/access_tokenid.c",
       "bytes": 10862,
       "sha256": "e90435cfbe6fd00d329f945cb24cfcef3fb0180da810bb598b25895639be8bbd"
@@ -611,11 +636,6 @@
       "path": "compat/ipc/hmos_config.h",
       "bytes": 562,
       "sha256": "7da98ae3267b9f16b714ec379e221d1d97f441ca8ae65b8196ed3b5868736cf6"
-    },
-    {
-      "path": "compat/ipc/Makefile",
-      "bytes": 203,
-      "sha256": "12cb7846d2394b14ab13043ca2639deaeb3c1c118b4e3103547f284cd1409bf1"
     },
     {
       "path": "compat/ipc/private_api.c",
@@ -753,6 +773,16 @@
       "sha256": "6dd51168c88ad41dec3d5a575885ff4616af838554bd8239c788e54d24f17fa2"
     },
     {
+      "path": "compat/touch/LICENSE",
+      "bytes": 11358,
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "compat/touch/ORIGIN.md",
+      "bytes": 547,
+      "sha256": "8179a99e0d7bd5b9733a70d2a5a8b420804d56ecc99cd4bfeb4a41acf937d289"
+    },
+    {
       "path": "compat/touch/bridge.cpp",
       "bytes": 10001,
       "sha256": "189a178d31168f2b0997a7472812cd5cc19c3d16cf4391646bb58eab99e6dca5"
@@ -761,11 +791,6 @@
       "path": "compat/touch/launcher.c",
       "bytes": 2824,
       "sha256": "14c5910d588f7b030be66c94e7c542487d3f802fb593650acb631ec64cfd5040"
-    },
-    {
-      "path": "compat/touch/LICENSE",
-      "bytes": 11358,
-      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
     {
       "path": "compat/touch/nvt_finger_filter.cpp",
@@ -786,11 +811,6 @@
       "path": "compat/touch/nvt_touch_core.hpp",
       "bytes": 3762,
       "sha256": "42515bb7b4c138cf1148ff2d23f5fbf2838a98bf870500aa89b6b783e53a0c83"
-    },
-    {
-      "path": "compat/touch/ORIGIN.md",
-      "bytes": 547,
-      "sha256": "8179a99e0d7bd5b9733a70d2a5a8b420804d56ecc99cd4bfeb4a41acf937d289"
     },
     {
       "path": "compat/useriam/adapter41.cpp",
@@ -1443,21 +1463,6 @@
       "sha256": "a4632de7870e00d41ade3010382250f9415ac45365bed50beef1f4e575330ed4"
     },
     {
-      "path": "README.en.md",
-      "bytes": 9319,
-      "sha256": "198b1136e75c50ec56ad2b76d8bca347080f00630fd72bb413f9c3cae7cb02be"
-    },
-    {
-      "path": "README.md",
-      "bytes": 7931,
-      "sha256": "e054d7c431bf00b4d4a4d7f8b1bb2e315b332040d194391f40eb0778c11af6a1"
-    },
-    {
-      "path": "RELEASE.json",
-      "bytes": 449,
-      "sha256": "21465db3e7aed0073e2ca0e50ce09623a66c6c594ff62983fdfd76f7e4ee28f5"
-    },
-    {
       "path": "runtime/audio/audio/scripts/load-official303-audio-card.sh",
       "bytes": 12621,
       "sha256": "ad8aea789e09bc3b854a66d22d16500e97d64338a45a954c285feda3b3550c90"
@@ -1738,14 +1743,14 @@
       "sha256": "059b99797678c579bac1e71f3a03879bd95e8af40847afd6dd982080f6c03e1e"
     },
     {
-      "path": "runtime/compat/graphics/ld-musl-namespace-aarch64-flex.ini",
-      "bytes": 9210,
-      "sha256": "07effc1d98a33562a9ab6089ffd6513657a28d8e9d1b264cb8e9936f9278af22"
-    },
-    {
       "path": "runtime/compat/graphics/ld-musl-namespace-aarch64-New.ini",
       "bytes": 10497,
       "sha256": "13adb04dacedf72f728e22c750d3b66b75e8acaad2b8357785e67a09bc045390"
+    },
+    {
+      "path": "runtime/compat/graphics/ld-musl-namespace-aarch64-flex.ini",
+      "bytes": 9210,
+      "sha256": "07effc1d98a33562a9ab6089ffd6513657a28d8e9d1b264cb8e9936f9278af22"
     },
     {
       "path": "runtime/compat/graphics/ld-musl-namespace-aarch64-test.ini",
@@ -1858,9 +1863,9 @@
       "sha256": "369af218bd02a5e561e4559c07db3c039d9372f4ff0be5ac07bddc749b8258fc"
     },
     {
-      "path": "SOURCE-SELECTION.json",
-      "bytes": 99185,
-      "sha256": "faaf0b43fcc57ae132aaae5ca01eb0bb4afc5290c1de425a34c005febdebbdb6"
+      "path": "tests/Test-FlashPreflight.ps1",
+      "bytes": 3942,
+      "sha256": "7151fe2413e8b225f34708e850cc93ed902e79d4ce98d3d88f63a5377aaa0731"
     },
     {
       "path": "tests/bootstrap/test_probe_serial_v121.c",
@@ -1898,11 +1903,6 @@
       "sha256": "5828126b3c9c77dc45f613dac5a02b0b6dd34a2aa71b15aefe6874f05b846bd0"
     },
     {
-      "path": "tests/Test-FlashPreflight.ps1",
-      "bytes": 3942,
-      "sha256": "7151fe2413e8b225f34708e850cc93ed902e79d4ce98d3d88f63a5377aaa0731"
-    },
-    {
       "path": "tests/test_android_sparse.py",
       "bytes": 1958,
       "sha256": "c035ddf009b138506e428a9d5e69c5828bbf30ab3ce073f53ab9d92dea4a9b88"
@@ -1938,6 +1938,11 @@
       "sha256": "29ef143926a06f37dbe1ec2b6759a60509f6d45475938c907bb7aa17f1afdefa"
     },
     {
+      "path": "tools/Flash-ProMax.ps1",
+      "bytes": 7285,
+      "sha256": "be456a7ac9aa4e7d21ffd689bd362951e98db3236a25786a1710976a93e193ab"
+    },
+    {
       "path": "tools/android_sparse.py",
       "bytes": 8721,
       "sha256": "e52a8b7b26d5ba086a26ae4228399be04be0b765aa68501f5718802015397626"
@@ -1959,8 +1964,8 @@
     },
     {
       "path": "tools/build_current.py",
-      "bytes": 14079,
-      "sha256": "7753a1c118361649c516df0d2dbe965c6cf31ac776cb47b6c425035a882a3def"
+      "bytes": 14255,
+      "sha256": "dc9a1e85c53e2ed16312684fc53ea8e39259e67747014c597b30ebda496842a6"
     },
     {
       "path": "tools/build_display_drm.py",
@@ -1991,11 +1996,6 @@
       "path": "tools/extract_huawei_full_ota.py",
       "bytes": 7031,
       "sha256": "e799ccacb6e9146cf4051c2840cffc43b2ea536d1b760e9aeca149dcef5a682c"
-    },
-    {
-      "path": "tools/Flash-ProMax.ps1",
-      "bytes": 7285,
-      "sha256": "be456a7ac9aa4e7d21ffd689bd362951e98db3236a25786a1710976a93e193ab"
     },
     {
       "path": "tools/patch_refresh_policy.py",

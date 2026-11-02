@@ -21,7 +21,10 @@ namespace {
 constexpr int32_t OK = 0, FAIL = -1, INVALID = -3, UNSUPPORTED = -5;
 constexpr uint64_t SUPPORTED_USAGE = 3 | (1ULL << 3) | (1ULL << 4) |
     (1ULL << 6) | (1ULL << 7) | (1ULL << 8) | (1ULL << 9) |
-    (1ULL << 10) | (1ULL << 16) | (1ULL << 26) | (1ULL << 27);
+    (1ULL << 10) | (1ULL << 16) | (1ULL << 25) | (1ULL << 26) | (1ULL << 27);
+// bit 25 is ALLOC_NO_IPC: a caller-side routing hint with no layout effect.
+// HMOS 6.0 RenderService sets it on its 540x1200 screen surface; rejecting it
+// prevents RenderService from creating a surface at all.
 #ifndef ACE5_LINEAR_STRIDE_ALIGNMENT
 #define ACE5_LINEAR_STRIDE_ALIGNMENT 256
 #endif
@@ -140,11 +143,14 @@ public:
     int32_t AllocMem(const AllocInfo &info, BufferHandle *&handle) const override
     {
         handle = nullptr;
-        Ace5Log("AllocMem width=%u height=%u format=%u usage=0x%llx expected=%u",
-            info.width, info.height, info.format, (unsigned long long)info.usage, info.expectedSize);
+        Ace5Log("AllocMem width=%u height=%u format=%u usage=0x%llx expected=%u supported=0x%llx",
+            info.width, info.height, info.format, (unsigned long long)info.usage,
+            info.expectedSize, (unsigned long long)SUPPORTED_USAGE);
         uint32_t stride; uint64_t size;
         if (!Layout(info.width, info.height, info.usage, info.format, stride, size)) {
-            Ace5Log("AllocMem unsupported layout/usage");
+            Ace5Log("AllocMem unsupported layout/usage=0x%llx supported=0x%llx rejected=0x%llx",
+                (unsigned long long)info.usage, (unsigned long long)SUPPORTED_USAGE,
+                (unsigned long long)(info.usage & ~SUPPORTED_USAGE));
             return UNSUPPORTED;
         }
         if (info.usage & (1ULL << 7)) {

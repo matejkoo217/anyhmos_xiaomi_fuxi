@@ -8,7 +8,7 @@ $B cp /graphics/native_thp_launcher $R/compat/bin/native_thp_launcher
 echo "e45ee9c7f7a7d21468498e9b74f12fe5d2437c84ff4ae0189729fecebff190c6  $R/compat/bin/native_thp_launcher" | $B sha256sum -c -
 $B chmod 0755 $R/compat/bin/native_thp_launcher
 $B cp /graphics/native_screenlock_request $R/compat/bin/native_screenlock_request
-echo "bffd5494d4e8040c48fb8a1c496d7b9b73d0006de72935fa9a894d5670f93b8b  $R/compat/bin/native_screenlock_request" | $B sha256sum -c -
+echo "6f50fdc20c99e1c557e5ffa22c409f988986d09c6faf206c53929fba1e8ccd81  $R/compat/bin/native_screenlock_request" | $B sha256sum -c -
 $B chmod 0755 $R/compat/bin/native_screenlock_request
 : > $R/data/local/tmp/sheng-thp-service.txt
 $B mkdir -p $R/data/local/tmp/sheng-capture

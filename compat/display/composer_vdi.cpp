@@ -81,6 +81,14 @@ Buffer client;
 // Late RS frames must never turn a successfully powered-off panel back on.
 bool requestedPowerOn = true;
 bool loggedOffSubmission = false;
+// A mode set is only needed for the first commit, after power-on, or after a
+// mode change. Sending DRM_MODE_ATOMIC_ALLOW_MODESET on every frame makes the
+// kernel run drm_atomic_helper_check_modeset each time and can fail on fuxi's
+// command-mode DSI panel, leaving the panel on the previous buffer.
+bool needModeset = true;
+// Last non-zero HDI backlight level (0..65535). hmos2sweet keeps the CRTC
+// active on screen-off and only blanks the OLED; restore this on power-on.
+uint32_t lastBacklight = 0;
 IRect clientCrop{};
 std::vector<IRect> clientDamage;
 std::mutex vsyncMutex;
@@ -138,7 +146,7 @@ void CleanupDrm()
         close(drm);
     }
     drm = -1; connector = crtc = plane = secondPlane = modeBlob = currentFb = 0;
-    propertyIds.clear(); displayModes.clear(); selectedMode = 0;
+    propertyIds.clear(); displayModes.clear(); selectedMode = 0; needModeset = true;
 }
 int Initialize()
 {
@@ -164,6 +172,11 @@ int Initialize()
                 if (candidate.hdisplay != mode.hdisplay || candidate.vdisplay != mode.vdisplay || !candidate.vrefresh) continue;
                 if (!memcmp(&candidate, &mode, sizeof(mode))) selectedMode = displayModes.size();
                 displayModes.push_back(candidate);
+            }
+            // fuxi publishes 60/90/120 command modes; prefer its native 120 Hz
+            // instead of the donor-preferred 60 Hz.
+            for (size_t m = 0; m < displayModes.size(); ++m) {
+                if (displayModes[m].vrefresh >= 120) { mode = displayModes[m]; selectedMode = m; break; }
             }
             connector = c->connector_id; mmWidth = c->mmWidth; mmHeight = c->mmHeight;
             for (int e = 0; e < c->count_encoders && !crtc; ++e) {
@@ -207,7 +220,7 @@ int Initialize()
         }
         drmModeFreePlaneResources(planes);
     }
-    if (!connector || !crtc || !plane || !secondPlane || mode.hdisplay != 3048 || mode.vdisplay != 2032 || drmModeCreatePropertyBlob(drm, &mode, sizeof(mode), &modeBlob)) {
+    if (!connector || !crtc || !plane || drmModeCreatePropertyBlob(drm, &mode, sizeof(mode), &modeBlob)) {
         Log("no usable display"); CleanupDrm(); return FAIL;
     }
     for (auto item : {std::make_pair(crtc,uint32_t(DRM_MODE_OBJECT_CRTC)), std::make_pair(connector,uint32_t(DRM_MODE_OBJECT_CONNECTOR))}) {
@@ -258,8 +271,28 @@ void *VsyncLoop(void *)
         int rc;
         do { rc = drmWaitVBlank(drm, &wait); } while (rc < 0 && errno == EINTR);
         if (rc) {
-            if (++errors <= 4) Ace5Log("hardware vsync wait failed errno=%d", errno);
-            usleep(20000); continue;
+            if (++errors <= 4) Ace5Log("hardware vsync wait failed errno=%d; synthesizing", errno);
+            // A failing vblank wait must never starve render_service. Synthesize
+            // the next tick on the last known period, with a non-zero timestamp.
+            VBlankCallback callback; void *data; uint64_t period;
+            {
+                std::lock_guard<std::mutex> state(vsyncMutex);
+                if (quit) break;
+                callback = vsyncEnabled ? vsyncCallback : nullptr;
+                data = vsyncData;
+                period = vsyncPeriod;
+            }
+            if (callback) {
+                uint64_t timestamp = MonotonicNs();
+                if (timestamp <= previous) timestamp = previous + period;
+                previous = timestamp;
+                callback(++sequence, timestamp, data);
+            }
+            unsigned waitUs = unsigned(period / 1000);
+            if (waitUs < 1000) waitUs = 1000;
+            if (waitUs > 20000) waitUs = 20000;
+            usleep(waitUs);
+            continue;
         }
         errors = 0;
         uint64_t timestamp = uint64_t(wait.reply.tval_sec) * 1000000000ULL +
@@ -363,7 +396,8 @@ struct SubmitMetrics {
         last = previous;
     }
 } submitMetrics;
-int Submit(bool testOnly, int32_t *presentFence = nullptr)
+int Submit(bool testOnly, int32_t *presentFence = nullptr,
+    const Buffer *source = nullptr, IRect sourceCrop = {})
 {
     if (presentFence) *presentFence = -1;
     if (!testOnly && !requestedPowerOn) {
@@ -374,12 +408,23 @@ int Submit(bool testOnly, int32_t *presentFence = nullptr)
         return OK;
     }
     uint64_t timing[6]{MonotonicNs()};
-    const auto &b = client.value;
-    if (!Linear(b)) return INVALID;
-    if (clientCrop.w < 2 || int64_t(clientCrop.x) + clientCrop.w > b.width ||
-        int64_t(clientCrop.y) + clientCrop.h > b.height) return INVALID;
-    if (client.fence >= 0) {
-        pollfd p{client.fence, POLLIN, 0}; int rc;
+    const auto &b = source ? source->value : client.value;
+    const IRect crop = source ? sourceCrop : clientCrop;
+    if (!Linear(b)) {
+        Ace5Log("client buffer rejected fd=%d %ux%u stride=%u fmt=%d usage=0x%llx reserve=%u/%u size=%u",
+            b.fd, b.width, b.height, b.stride, int(b.format),
+            (unsigned long long)b.usage, b.reserveFds, b.reserveInts, b.size);
+        return INVALID;
+    }
+    if (crop.w < 2 || int64_t(crop.x) + crop.w > b.width ||
+        int64_t(crop.y) + crop.h > b.height) {
+        Ace5Log("client crop %d,%d %dx%d exceeds buffer %ux%u; rejecting",
+            crop.x, crop.y, crop.w, crop.h, b.width, b.height);
+        return INVALID;
+    }
+    int acquireFence = source ? source->fence : client.fence;
+    if (acquireFence >= 0) {
+        pollfd p{acquireFence, POLLIN, 0}; int rc;
         do { rc = poll(&p, 1, 1000); } while (rc < 0 && errno == EINTR);
         if (rc <= 0 || !(p.revents & POLLIN)) return FAIL;
     }
@@ -394,50 +439,101 @@ int Submit(bool testOnly, int32_t *presentFence = nullptr)
     if (!request) { drmModeRmFB(drm, fb); return FAIL; }
     timing[2] = MonotonicNs();
     bool valid = true;
-    uint64_t retireFence = UINT64_MAX;
+    uint64_t retireFence = UINT64_MAX, outFence = UINT64_MAX;
 #define PROP(object, type, name, value) valid &= Property(request, object, type, name, value) >= 0
-    PROP(connector, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", crtc);
-    PROP(crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID", modeBlob);
-    PROP(crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE", 1);
-    // 由内核返回本次呈现 fence，测试提交不创建文件描述符
-    if (!testOnly) PROP(connector, DRM_MODE_OBJECT_CONNECTOR, "RETIRE_FENCE",
-        reinterpret_cast<uintptr_t>(&retireFence));
-    // Partition the source exactly; no gap or duplicated column at the seam.
-    const int leftSourceWidth = clientCrop.w / 2;
-    for (unsigned half = 0; half < 2; ++half) {
-        const uint32_t target = half ? secondPlane : plane;
-        const int sourceX = clientCrop.x + (half ? leftSourceWidth : 0);
-        const int sourceWidth = half ? clientCrop.w - leftSourceWidth : leftSourceWidth;
-        const uint32_t outputWidth = mode.hdisplay / 2;
-        PROP(target, DRM_MODE_OBJECT_PLANE, "FB_ID", fb);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_ID", crtc);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_X", uint64_t(sourceX) << 16);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_Y", uint64_t(clientCrop.y) << 16);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_W", uint64_t(sourceWidth) << 16);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_H", uint64_t(clientCrop.h) << 16);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_X", half * outputWidth);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_Y", 0);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_W", outputWidth);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_H", mode.vdisplay);
-        PROP(target, DRM_MODE_OBJECT_PLANE, "color_fill", 0);
+    // Connector/mode binding belongs only to the first commit (or a relight).
+    // Re-adding it every frame makes SDE reject the commit on a command-mode
+    // DSC panel.
+    if (needModeset) {
+        PROP(connector, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", crtc);
+        PROP(crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID", modeBlob);
+        PROP(crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE", 1);
+    }
+    // Standard DRM presentation fence on the CRTC: this is the fence the
+    // render service expects. RETIRE_FENCE is a vendor connector property and
+    // is absent on fuxi.
+    if (!testOnly) Property(request, crtc, DRM_MODE_OBJECT_CRTC, "OUT_FENCE_PTR",
+        reinterpret_cast<uintptr_t>(&outFence));
+    // RETIRE_FENCE is a sheng-specific optional connector property. fuxi's
+    // msm_drm may not expose it; a missing optional property must not abort
+    // the whole atomic commit, otherwise the panel keeps the previous buffer.
+    static bool hasRetireFence = true;
+    if (!testOnly && hasRetireFence &&
+        Property(request, connector, DRM_MODE_OBJECT_CONNECTOR, "RETIRE_FENCE",
+            reinterpret_cast<uintptr_t>(&retireFence)) < 0) {
+        hasRetireFence = false;
+    }
+    // SHENG_SPLIT_SCANOUT_V1 only applies to the donor 3048x2032 dual-DSI
+    // panel. fuxi is a single 1080x2400 DSI panel, so scan out one full-width
+    // plane there (secondPlane is optional).
+    if (secondPlane && mode.hdisplay == 3048 && mode.vdisplay == 2032) {
+        // Partition the source exactly; no gap or duplicated column at the seam.
+        const int leftSourceWidth = crop.w / 2;
+        for (unsigned half = 0; half < 2; ++half) {
+            const uint32_t target = half ? secondPlane : plane;
+            const int sourceX = crop.x + (half ? leftSourceWidth : 0);
+            const int sourceWidth = half ? crop.w - leftSourceWidth : leftSourceWidth;
+            const uint32_t outputWidth = mode.hdisplay / 2;
+            PROP(target, DRM_MODE_OBJECT_PLANE, "FB_ID", fb);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_ID", crtc);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_X", uint64_t(sourceX) << 16);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_Y", uint64_t(crop.y) << 16);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_W", uint64_t(sourceWidth) << 16);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "SRC_H", uint64_t(crop.h) << 16);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_X", half * outputWidth);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_Y", 0);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_W", outputWidth);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "CRTC_H", mode.vdisplay);
+            PROP(target, DRM_MODE_OBJECT_PLANE, "color_fill", 0);
+        }
+    } else {
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "FB_ID", fb);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "CRTC_ID", crtc);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "SRC_X", uint64_t(crop.x) << 16);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "SRC_Y", uint64_t(crop.y) << 16);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "SRC_W", uint64_t(crop.w) << 16);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "SRC_H", uint64_t(crop.h) << 16);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "CRTC_X", 0);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "CRTC_Y", 0);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "CRTC_W", mode.hdisplay);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "CRTC_H", mode.vdisplay);
+        PROP(plane, DRM_MODE_OBJECT_PLANE, "color_fill", 0);
+        Property(request, plane, DRM_MODE_OBJECT_PLANE, "zpos", 0);
     }
 #undef PROP
     timing[3] = MonotonicNs();
-    rc = valid ? drmModeAtomicCommit(drm, request,
-        DRM_MODE_ATOMIC_ALLOW_MODESET | (testOnly ? DRM_MODE_ATOMIC_TEST_ONLY : 0), nullptr) : -1;
+    // Pace on the previous flip instead of hitting EBUSY and sleeping a frame.
+    static int prevFence = -1;
+    if (prevFence >= 0) {
+        pollfd previous{prevFence, POLLIN, 0};
+        poll(&previous, 1, 25);
+        close(prevFence);
+        prevFence = -1;
+    }
+    const uint32_t commitFlags = DRM_MODE_ATOMIC_NONBLOCK |
+        (needModeset ? DRM_MODE_ATOMIC_ALLOW_MODESET : 0) |
+        (testOnly ? DRM_MODE_ATOMIC_TEST_ONLY : 0);
+    rc = valid ? drmModeAtomicCommit(drm, request, commitFlags, nullptr) : -1;
     timing[4] = MonotonicNs();
     drmModeAtomicFree(request);
-    // 失败提交也可能已创建 fence，未移交的描述符由作用域释放
-    OwnedFence present(retireFence <= INT_MAX ? int(retireFence) : -1);
+    // Failed commits can still create a fence; the local owner closes any fd
+    // we do not hand to the caller.
+    int presentFd = outFence <= INT_MAX ? int(outFence) :
+        (retireFence <= INT_MAX ? int(retireFence) : -1);
+    OwnedFence present(presentFd);
     if (present.fd >= 0) fcntl(present.fd, F_SETFD, FD_CLOEXEC);
+    if (!rc && !testOnly && present.fd >= 0) {
+        int pacing = dup(present.fd);
+        if (pacing >= 0) { fcntl(pacing, F_SETFD, FD_CLOEXEC); prevFence = pacing; }
+    }
     if (rc || testOnly) drmModeRmFB(drm, fb);
-    else { if (currentFb) drmModeRmFB(drm, currentFb); currentFb = fb; }
+    else { if (currentFb) drmModeRmFB(drm, currentFb); currentFb = fb; needModeset = false; }
     timing[5] = MonotonicNs();
     if (!rc && !testOnly && presentFence) {
         *presentFence = present.Take();
         static bool reported = false;
         if (!reported) {
-            Metric("PRESENT_FENCE first_fd=%d blocking_commit=1", *presentFence);
+            Metric("PRESENT_FENCE first_fd=%d blocking_commit=0", *presentFence);
             reported = true;
         }
     }
@@ -469,11 +565,14 @@ int BlackPowerOn()
     b.fd = alloc.fd; b.width = mode.hdisplay; b.height = mode.vdisplay;
     b.stride = pitch; b.size = alloc.len; b.format = V::PIXEL_FMT_RGBX_8888;
     OwnedFence noFence(-1);
-    if (!result) result = client.Set(b, noFence);
+    Buffer black;
+    if (!result) result = black.Set(b, noFence);
     close(alloc.fd);
     if (result) return FAIL;
-    clientCrop = {0, 0, mode.hdisplay, mode.vdisplay};
-    return Submit(false);
+    IRect full{0, 0, mode.hdisplay, mode.vdisplay};
+    // Submit a temporary black buffer without disturbing the client buffer the
+    // render service has already queued.
+    return Submit(false, nullptr, &black, full);
 }
 // 采用先检验模式再提交的方法，失败时保留目前状态防止黑砖救不了
 int ChangeMode(uint32_t modeId)
@@ -498,7 +597,7 @@ int ChangeMode(uint32_t modeId)
         return FAIL;
     }
     uint32_t previousBlob = modeBlob;
-    mode = candidate; modeBlob = candidateBlob; selectedMode = modeId;
+    mode = candidate; modeBlob = candidateBlob; selectedMode = modeId; needModeset = false;
     {
         std::lock_guard<std::mutex> state(vsyncMutex);
         vsyncPeriod = Period(); ++modeGeneration;
@@ -574,53 +673,50 @@ extern "C" int32_t SetDisplayModeAsync(uint32_t id, uint32_t modeId, ModeCallbac
     cb(modeId, period, data);
     return OK;
 }
+int ApplyBacklight(uint32_t level);
 extern "C" int32_t GetDisplayPowerStatus(uint32_t id, V::DispPowerStatus &status)
 {
-    DEVICE_LOCK(id); bool active;
-    if (Active(active)) return FAIL;
-    status = active ? V::POWER_STATUS_ON : V::POWER_STATUS_OFF;
+    DEVICE_LOCK(id);
+    // The CRTC stays ACTIVE across screen-off; report the logical OLED state.
+    status = requestedPowerOn ? V::POWER_STATUS_ON : V::POWER_STATUS_OFF;
     return OK;
 }
 extern "C" int32_t SetDisplayPowerStatus(uint32_t id, V::DispPowerStatus status)
 {
     DEVICE_LOCK(id);
-    if (status != V::POWER_STATUS_ON && status != V::POWER_STATUS_OFF) return UNSUPPORTED;
-    bool active;
-    if (Active(active)) return FAIL;
-    bool wanted = status == V::POWER_STATUS_ON;
-    if (active == wanted) {
-        requestedPowerOn = wanted;
-        loggedOffSubmission = false;
-        return OK;
-    }
-    const bool previousRequest = requestedPowerOn;
-    // ON must be able to submit the retained client buffer. Restore the prior
-    // request if the atomic power transition fails, instead of claiming success.
-    if (wanted) requestedPowerOn = true;
-    int result;
-    if (wanted) result = client.value.fd >= 0 ? Submit(false) : BlackPowerOn();
-    else {
-        auto *request = drmModeAtomicAlloc();
-        if (!request) return FAIL;
-        // SHENG_FULL_POWER_OFF_V1: detach all objects, so reactivation
-        // rebuilds the complete routing state instead of retaining a mode.
-        bool valid = true;
-        for (uint32_t target : {plane, secondPlane}) {
-            valid &= Property(request, target, DRM_MODE_OBJECT_PLANE, "FB_ID", 0) >= 0;
-            valid &= Property(request, target, DRM_MODE_OBJECT_PLANE, "CRTC_ID", 0) >= 0;
-        }
-        valid &= Property(request, connector, DRM_MODE_OBJECT_CONNECTOR, "CRTC_ID", 0) >= 0;
-        valid &= Property(request, crtc, DRM_MODE_OBJECT_CRTC, "ACTIVE", 0) >= 0;
-        valid &= Property(request, crtc, DRM_MODE_OBJECT_CRTC, "MODE_ID", 0) >= 0;
-        result = valid ? drmModeAtomicCommit(drm, request, DRM_MODE_ATOMIC_ALLOW_MODESET, nullptr) : FAIL;
-        drmModeAtomicFree(request);
-        if (!result && currentFb) { drmModeRmFB(drm, currentFb); currentFb = 0; }
-    }
-    if (!result) {
-        requestedPowerOn = wanted;
-        loggedOffSubmission = false;
+    // The VDI is built against v1_0, which only names ON/STANDBY/SUSPEND/OFF.
+    // The v1_2 caller still passes OFF_FAKE/PRE_ON/PRE_OFF/DOZE by value.
+    const int power = static_cast<int>(status);
+    if (power == 5 || power == 6) return OK; // PRE_ON / PRE_OFF notification
+    bool wanted;
+    if (power == int(V::POWER_STATUS_ON)) {
+        wanted = true;
+    } else if (power == int(V::POWER_STATUS_STANDBY) || power == int(V::POWER_STATUS_SUSPEND) ||
+               power == int(V::POWER_STATUS_OFF) || power == 4 || power == 7 || power == 8) {
+        wanted = false;
     } else {
-        requestedPowerOn = previousRequest;
+        return UNSUPPORTED;
+    }
+    if (requestedPowerOn == wanted) { loggedOffSubmission = false; return OK; }
+    const bool previousRequest = requestedPowerOn;
+    int result;
+    if (!wanted) {
+        // hmos2sweet model: keep connector/CRTC/planes bound and scan one
+        // black frame, then blank the OLED. Detaching the CRTC leaves fuxi's
+        // command-mode DSC panel frozen on stale memory after wake.
+        requestedPowerOn = true; // let the blank frame through the off latch
+        result = BlackPowerOn();
+        if (!result) {
+            requestedPowerOn = false;
+            loggedOffSubmission = true;
+            ApplyBacklight(0);
+        } else {
+            requestedPowerOn = previousRequest;
+        }
+    } else {
+        requestedPowerOn = true;
+        if (lastBacklight > 0) ApplyBacklight(lastBacklight);
+        result = client.value.fd >= 0 ? Submit(false) : BlackPowerOn();
     }
     Ace5Log("power requested=%d result=%d latched_on=%d", int(status), result, requestedPowerOn);
     return result == 0 ? OK : FAIL;
@@ -640,9 +736,8 @@ extern "C" int32_t GetDisplayBacklight(uint32_t id, uint32_t &level)
     if(ReadPanelValue("max_brightness",maximum)||!maximum||ReadPanelValue("brightness",native)||native>maximum)return FAIL;
     level=(uint64_t(native)*65535+maximum/2)/maximum; return OK;
 }
-extern "C" int32_t SetDisplayBacklight(uint32_t id, uint32_t level)
+int ApplyBacklight(uint32_t level)
 {
-    DEVICE_LOCK(id);
     Metric("BACKLIGHT_REQUEST raw=%u supported_max=65535", level);
     if(level>65535){Metric("BACKLIGHT_REJECT raw=%u",level);return INVALID;}
     uint32_t maximum=0;
@@ -654,6 +749,14 @@ extern "C" int32_t SetDisplayBacklight(uint32_t id, uint32_t level)
     if(written!=length)return FAIL; uint32_t observed=0;
     if(ReadPanelValue("brightness",observed)||observed!=native)return FAIL;
     Metric("BACKLIGHT_APPLIED raw=%u native=%u max=%u verified=%u",level,native,maximum,observed);Ace5Log("backlight level=%u native=%u max=%u verified=%u",level,native,maximum,observed);return OK;
+}
+extern "C" int32_t SetDisplayBacklight(uint32_t id, uint32_t level)
+{
+    DEVICE_LOCK(id);
+    if (level > 0) lastBacklight = level;
+    // Remember the level while the OLED is logically off, but do not light it.
+    if (!requestedPowerOn) return OK;
+    return ApplyBacklight(level);
 }
 extern "C" int32_t GetDisplayVBlankPeriod(uint32_t id, uint64_t &period)
 { DEVICE_LOCK(id); period = Period(); return OK; }
